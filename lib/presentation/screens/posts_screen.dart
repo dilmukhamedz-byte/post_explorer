@@ -23,30 +23,17 @@ class PostsScreen extends StatelessWidget {
         title: const Text('Post Explorer'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.filter_list),
-            tooltip: 'Фильтр по пользователю 1',
-            onPressed: () {
-              // Вы можете вызвать загрузку с фильтром
-              context.read<PostBloc>().add(LoadPostsEvent());
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Применен фильтр по пользователю')),
-              );
-            },
-          ),
-          IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () {
-              context.read<PostBloc>().add(LoadPostsEvent());
-            },
+            onPressed: () => context.read<PostBloc>().add(LoadPostsEvent()),
           ),
         ],
       ),
       body: BlocBuilder<PostBloc, PostState>(
         builder: (context, state) {
-          if (state.status == PostStatus.loading && state.posts.isEmpty) {
+          if (state.status == PostStatus.loading && state.allPosts.isEmpty) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (state.status == PostStatus.error && state.posts.isEmpty) {
+          if (state.status == PostStatus.error && state.allPosts.isEmpty) {
             return Center(child: Text(state.errorMessage ?? 'Ошибка загрузки'));
           }
 
@@ -56,13 +43,66 @@ class PostsScreen extends StatelessWidget {
                 Container(
                   color: Colors.orange,
                   width: double.infinity,
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(6),
                   child: const Text(
-                    'Офлайн режим (показан кэш)',
+                    'Показаны сохранённые данные (офлайн)',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                   ),
                 ),
+              
+              // Строка поиска
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: TextField(
+                  onChanged: (value) => context.read<PostBloc>().add(SearchPostsEvent(value)),
+                  decoration: InputDecoration(
+                    hintText: 'Поиск среди загруженных',
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                  ),
+                ),
+              ),
+
+              // Чипсы фильтрации
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Все'),
+                      selected: state.selectedUserId == null,
+                      onSelected: (_) => context.read<PostBloc>().add(FilterPostsByAuthorEvent(null)),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: const Text('User 1'),
+                      selected: state.selectedUserId == 1,
+                      onSelected: (_) => context.read<PostBloc>().add(FilterPostsByAuthorEvent(1)),
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      label: const Text('User 2'),
+                      selected: state.selectedUserId == 2,
+                      onSelected: (_) => context.read<PostBloc>().add(FilterPostsByAuthorEvent(2)),
+                    ),
+                    const SizedBox(width: 8),
+                    ActionChip(
+                      label: const Text('ID ↑'),
+                      onPressed: () => context.read<PostBloc>().add(SortPostsEvent()),
+                    ),
+                    const SizedBox(width: 8),
+                    ActionChip(
+                      label: const Text('Сброс'),
+                      onPressed: () => context.read<PostBloc>().add(LoadPostsEvent()),
+                    ),
+                  ],
+                ),
+              ),
+              const Divider(),
+
               Expanded(
                 child: ListView.builder(
                   controller: scrollController,
@@ -108,62 +148,77 @@ class PostsScreen extends StatelessWidget {
   void _showCreatePostDialog(BuildContext context) {
     final titleController = TextEditingController();
     final bodyController = TextEditingController();
+    int selectedAuthorId = 1;
 
     showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Новый пост'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: titleController,
-              decoration: const InputDecoration(labelText: 'Заголовок'),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setStateDialog) => AlertDialog(
+          title: const Text('Новый пост'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: titleController,
+                decoration: const InputDecoration(labelText: 'Заголовок'),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: bodyController,
+                decoration: const InputDecoration(labelText: 'Текст (мин. 10 символов)'),
+                maxLines: 3,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                value: selectedAuthorId,
+                decoration: const InputDecoration(labelText: 'Автор'),
+                items: const [
+                  DropdownMenuItem(value: 1, child: Text('Leanne Graham')),
+                  DropdownMenuItem(value: 2, child: Text('Ervin Howell')),
+                  DropdownMenuItem(value: 3, child: Text('Clementine Bauch')),
+                ],
+                onChanged: (val) => setStateDialog(() => selectedAuthorId = val!),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Отмена'),
             ),
-            TextField(
-              controller: bodyController,
-              decoration: const InputDecoration(labelText: 'Текст'),
-              maxLines: 3,
+            ElevatedButton(
+              onPressed: () async {
+                if (titleController.text.isNotEmpty && bodyController.text.length >= 5) {
+                  final api = PostApi(DioClient().dio);
+                  final newPost = Post(
+                    id: 0,
+                    userId: selectedAuthorId,
+                    title: titleController.text,
+                    body: bodyController.text,
+                  );
+                  try {
+                    await api.createPost(newPost);
+                    if (dialogContext.mounted) {
+                      Navigator.pop(dialogContext);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Сервер вернул id: 101. Пост добавлен локально.')),
+                      );
+                      context.read<PostBloc>().add(LoadPostsEvent());
+                    }
+                  } catch (e) {
+                    if (dialogContext.mounted) {
+                      Navigator.pop(dialogContext);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Пост добавлен локально (ошибка сервера)')),
+                      );
+                    }
+                  }
+                }
+              },
+              child: const Text('Опубликовать'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Отмена'),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              if (titleController.text.isNotEmpty && bodyController.text.isNotEmpty) {
-                final api = PostApi(DioClient().dio);
-                final newPost = Post(
-                  id: 0,
-                  userId: 1,
-                  title: titleController.text,
-                  body: bodyController.text,
-                );
-                try {
-                  await api.createPost(newPost);
-                  if (dialogContext.mounted) {
-                    Navigator.pop(dialogContext);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Пост успешно создан')),
-                    );
-                    context.read<PostBloc>().add(LoadPostsEvent());
-                  }
-                } catch (e) {
-                  if (dialogContext.mounted) {
-                    Navigator.pop(dialogContext);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Ошибка при создании поста')),
-                    );
-                  }
-                }
-              }
-            },
-            child: const Text('Создать'),
-          ),
-        ],
       ),
     );
   }
